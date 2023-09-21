@@ -1,0 +1,29 @@
+{
+  "name": "bluecadet/bc_drupal_package_manager",
+  "description": "Adds functionality to check for updates for Drupal modules.",
+  "authors": [
+    {
+      "name": "Pete Inge",
+      "email": "pete.inge@gmail.com",
+      "role": "Maintainer"
+    }
+  ],
+  "support": {
+    "issues": "https://github.com/bluecadet/bc_drupal_package_manager/issues"
+  },
+  "license": "GPL-2.0+",
+  "minimum-stability": "dev",
+  "prefer-stable": true,
+  "require": {
+    "php": "^7.4||^8.0",
+    "melbahja/semver": "^1.0.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Bluecadet\\DrupalPackageManager\\": "src/"
+    }
+  },
+  "config": {
+    "sort-packages": true
+  }
+}
