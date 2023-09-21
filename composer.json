@@ -1,6 +1,6 @@
 {
   "name": "bluecadet/bc_drupal_package_manager",
-  "description": "Adds functionality to check for updates for Drupal modules.",
+  "description": "Adds functionality to check for updates for custom Drupal modules built by Bluecadet.",
   "authors": [
     {
       "name": "Pete Inge",

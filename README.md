@@ -1,6 +1,8 @@
+# Bluecadet Drupal Module/Package Manager
 
+Adds functionality to check for updates for custom Drupal modules built by Bluecadet.
 
-EX
+EX.
 
 ```php
 
