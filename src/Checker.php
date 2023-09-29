@@ -3,7 +3,10 @@
 namespace Bluecadet\DrupalPackageManager;
 
 use Drupal\update\UpdateManagerInterface;
-use Melbahja\Semver\Semver;
+use z4kn4fein\SemVer\Constraints\Constraint;
+use z4kn4fein\SemVer\Inc;
+use z4kn4fein\SemVer\SemverException;
+use z4kn4fein\SemVer\Version;
 
 class Checker {
 
@@ -46,71 +49,89 @@ class Checker {
             $this->links[$user][$module_name] = $packagist_base;
             $this->titles[$user][$module_name] = $this->projects[$module_name]['info']['name'];
 
-            $exisiting_version = $this->projects[$module_name]['existing_version'] ? Semver::parse($this->projects[$module_name]['existing_version']) : "";
+            try {
+              $exisiting_version = "";
+              if (isset($this->projects[$module_name]['existing_version']) && $this->validVersionString($this->projects[$module_name]['existing_version'], FALSE)) {
+                $exisiting_version = Version::parse($this->projects[$module_name]['existing_version'], FALSE);
+              }
+            }
+            catch (SemverException $e) {
+              // ksm($e);
+              break;
+            }
+
             $packages = $this->packagistData[$user][$module_name]['packages'][$package_name];
 
-            // ksm($exisiting_version, $packages);
-
             // Sort pakcages from packagist lowest to highest.
-            uasort($packages, [$this, 'orderPackages']);
+            usort($packages, [$this, 'orderPackages']);
 
-            // $this->projects[$module_name]['status'] = UpdateManagerInterface::CURRENT;
             $this->statuses[$user][$module_name] = UpdateManagerInterface::CURRENT;
 
-            // ksm($packages);
-
             foreach ($packages as $package_data) {
+
               try {
 
-                $release_version = Semver::parse($package_data['version']);
+                if (isset($package_data['version']) && $this->validVersionString($package_data['version'], FALSE)) {
+                  $release_version = Version::parse($package_data['version'], FALSE);
 
-                if ($exisiting_version->compare($release_version, "<")) {
+                  if ($exisiting_version->isLessThan($release_version)) {
 
-                  // Create release data.
-                  $release_data = [
-                    'name' => $this->projects[$module_name]['name'],
-                    'version' => $package_data['version'],
-                    'tag' => $package_data['version'],
-                    'status' => "published",
-                    'release_link' => $packagist_base . "#" . $package_data['version'],
-                    'download_link' => $packagist_base . "#" . $package_data['version'],
-                    'date' => strtotime($package_data['time']),
-                    'files' => "",
-                    'terms' => [],
-                    'security' => "",
-                  ];
+                    // Create release data.
+                    $release_data = [
+                      'name' => $this->projects[$module_name]['name'],
+                      'version' => $package_data['version'],
+                      'tag' => $package_data['version'],
+                      'status' => "published",
+                      'release_link' => $packagist_base . "#" . $package_data['version'],
+                      'download_link' => $packagist_base . "#" . $package_data['version'],
+                      'date' => strtotime($package_data['time']),
+                      'files' => "",
+                      'terms' => [],
+                      'security' => "",
+                    ];
 
-                  $this->releases[$user][$module_name][$package_data['version']] = $release_data;
+                    $this->releases[$user][$module_name][$package_data['version']] = $release_data;
 
-                  // Is is also?
-                  if ($exisiting_version->getMajor() < $release_version->getMajor()) {
-                    $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
-                    $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
-                  }
-                  elseif ($exisiting_version->getMajor() == $release_version->getMajor() && $exisiting_version->getMinor() < $release_version->getMinor()) {
-                    $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
-                  }
+                    // Is is also?
+                    if (Version::lessThan($exisiting_version, $release_version)) {
 
-                  // Is it latest?
-                  // Is it recommended?
-                  if ($exisiting_version->getMajor() == $release_version->getMajor()) {
-                    $this->latestVersion[$user][$module_name] = $package_data['version'];
-                    $this->recommended[$user][$module_name] = $package_data['version'];
+                      if (!$release_version->isPreRelease()) {
+                        $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
+                      }
 
-                    if ($exisiting_version != $release_version) {
-                      $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
+                      // Is it latest?
+                      // Is it recommended?
+                      if ($exisiting_version->getMajor() == $release_version->getMajor()) {
+
+                        $constraint = Constraint::parse("^" . $exisiting_version->__toString());
+                        if (!$release_version->isPreRelease()) {
+                          $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
+                        }
+
+
+                        if ($release_version->isPreRelease() && $exisiting_version->getMinor() == $release_version->getMinor())  {
+                          $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor() . ".x"] = $package_data['version'];
+                        }
+                      }
                     }
                   }
                 }
               }
+              catch (SemverException $e) {
+                // ksm($e);
+                break;
+              }
               catch (\Exception $e) {
                 $this->warnings[$module_name][] = 'Caught exception while checking release: ' . $e->getMessage();
+                // ksm($e);
               }
             }
           }
         }
         catch  (\Exception $e) {
-          ksm("data error");
+          // ksm($e);
+          // ksm("data error");
+          $this->warnings[$module_name][] = 'Caught exception while checking release data: ' . $e->getMessage();
         }
       }
     }
@@ -141,11 +162,27 @@ class Checker {
     }
   }
 
+  protected function validVersionString(string $version, bool $strict = FALSE):bool {
+    try {
+      Version::parse($version, $strict);
+    }
+    catch (\Exception $e) {
+      return FALSE;
+    }
+
+    return TRUE;
+  }
+
   protected function orderPackages($a, $b) {
-    if (Semver::compare($a['version'], $b['version'])) {
+    try {
+
+      // ksm($a['version'], $b['version'], Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE), '>'));
+      return Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE), '>');
+    }
+    catch(\Exception $e) {
+      // ksm("error", $a['version'], $b['version']);
       return 0;
     }
-    return Semver::compare($a['version'], $b['version'], '>') ? 1 : -1;
   }
 
 

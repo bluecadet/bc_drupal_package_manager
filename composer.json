@@ -16,7 +16,7 @@
   "prefer-stable": true,
   "require": {
     "php": "^7.4||^8.0",
-    "melbahja/semver": "^1.0.0"
+    "z4kn4fein/php-semver": "^2.0"
   },
   "autoload": {
     "psr-4": {
