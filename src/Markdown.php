@@ -3,9 +3,9 @@
 namespace Bluecadet\DrupalPackageManager;
 
 use PHP_CodeSniffer\Files\File;
-use PHP_CodeSniffer\Reports;
+use PHP_CodeSniffer\Reports\Report;
 
-class Markdown implements Reports {
+class Markdown implements Report {
 
     /**
      * Generate a partial report for a single processed file.
@@ -23,8 +23,51 @@ class Markdown implements Reports {
      */
     public function generateFileReport($report, File $phpcsFile, $showSources=false, $width=80) {
 
-    }
+      $colors = $phpcsFile->config->__get('colors');
 
+      if (!empty($report['messages'])) {
+
+        echo "zzzzzz" . $report['filename'].'>>'.$report['errors'].'>>'.$report['warnings'] . "zzzzzz" . PHP_EOL;
+
+
+        echo "___" . PHP_EOL;
+        echo "## FILE: " . $report['filename'] . PHP_EOL;
+        echo "" . PHP_EOL;
+
+        echo "### FOUND ";
+        if ($report['errors'] > 0) {
+          echo $report['errors'] . " ERRORS ";
+        }
+        if ($report['warnings'] > 0) {
+          echo $report['warnings'] . " WARNINGS ";
+        }
+        echo "".PHP_EOL;
+
+
+        echo "".PHP_EOL;
+        echo "| Line # | Severity | FIX | Message |" . PHP_EOL;
+        echo "| -----: | :------: | :-: | :------ |" . PHP_EOL;
+
+        foreach ($report['messages'] as $line => $lineErrors) {
+          foreach ($lineErrors as $column => $colErrors) {
+            foreach ($colErrors as $error) {
+              echo "| " . $line . " | ";
+              echo $colors? "<span style=\"color: " . (($error['type'] == "ERROR")? "red" : "yellow") . "\">" . $error['type'] . "</span>" : $error['type'];
+              echo " | ";
+              echo ($error['fixable'])? "[x]" : "[ ]";
+              echo " | " . $error['message'];
+              if ($showSources) echo "<br>&nbsp;&nbsp;(" . $error['source'] . ")";
+              echo " |" . PHP_EOL;
+            }
+          }
+        }
+
+
+        echo "".PHP_EOL;
+        echo "<br><br>".PHP_EOL;
+        echo "".PHP_EOL;
+      }
+    }
 
     /**
      * Generate the actual report.
@@ -53,6 +96,27 @@ class Markdown implements Reports {
       $interactive=false,
       $toScreen=true
     ) {
+        if ($cachedData === '') {
+            return;
+        }
 
+        $cachedData = preg_replace('/zzzzzz.*zzzzzz/i', "", $cachedData);
+
+        echo "# PHPCS Report" . PHP_EOL;
+        echo "" . PHP_EOL;
+
+
+        echo "Total Errors: " . $totalErrors . PHP_EOL;
+        echo "" . PHP_EOL;
+
+
+        echo "Total Warnings: " . $totalWarnings . PHP_EOL;
+        echo "" . PHP_EOL;
+
+
+        echo "Total Fixable: " . $totalFixable . PHP_EOL;
+        echo "" . PHP_EOL;
+
+        echo $cachedData;
     }
 }
