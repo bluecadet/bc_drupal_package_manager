@@ -104,10 +104,10 @@ class Checker {
                       if ($exisiting_version->getMajor() == $release_version->getMajor()) {
 
                         $constraint = Constraint::parse("^" . $exisiting_version->__toString());
-                        if (!$release_version->isPreRelease()) {
+                        // I want to see all versions higher than current regardless.
+                        // if (!$release_version->isPreRelease()) {
                           $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
-                        }
-
+                        // }
 
                         if ($release_version->isPreRelease() && $exisiting_version->getMinor() == $release_version->getMinor())  {
                           $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor() . ".x"] = $package_data['version'];
