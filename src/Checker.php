@@ -9,6 +9,11 @@ use z4kn4fein\SemVer\Version;
 
 class Checker {
 
+  /**
+   * How long to cache a Packagist response, in seconds.
+   */
+  const CACHE_TTL = 21600;
+
   protected $modules = [];
   protected $projects = [];
 
@@ -33,6 +38,25 @@ class Checker {
     $this->projects = $projects;
   }
 
+  /**
+   * Records a warning against a module and logs it, so failures are never
+   * silently discarded even if a caller never inspects getWarnings().
+   */
+  protected function logWarning(string $module_name, string $message): void {
+    $this->warnings[$module_name][] = $message;
+    \Drupal::logger('bc_drupal_package_manager')->warning('@module: @message', [
+      '@module' => $module_name,
+      '@message' => $message,
+    ]);
+  }
+
+  /**
+   * Returns all warnings recorded so far, keyed by module name.
+   */
+  public function getWarnings(): array {
+    return $this->warnings;
+  }
+
   public function getUpdates():void {
 
     $moduleHandler = \Drupal::service('module_handler');
@@ -55,17 +79,17 @@ class Checker {
               }
             }
             catch (SemverException $e) {
-              $this->warnings[$module_name][] = 'Could not parse existing version: ' . $e->getMessage();
+              $this->logWarning($module_name, 'Could not parse existing version: ' . $e->getMessage());
               continue;
             }
 
             if (!$exisiting_version instanceof Version) {
-              $this->warnings[$module_name][] = 'No valid existing version available for ' . $module_name . '; skipping update check.';
+              $this->logWarning($module_name, 'No valid existing version available for ' . $module_name . '; skipping update check.');
               continue;
             }
 
             if (!isset($this->packagistData[$user][$module_name]['packages'][$package_name]) || !is_array($this->packagistData[$user][$module_name]['packages'][$package_name])) {
-              $this->warnings[$module_name][] = 'No Packagist data available for ' . $package_name . '; skipping update check.';
+              $this->logWarning($module_name, 'No Packagist data available for ' . $package_name . '; skipping update check.');
               continue;
             }
 
@@ -127,17 +151,17 @@ class Checker {
                 }
               }
               catch (SemverException $e) {
-                $this->warnings[$module_name][] = 'Could not parse release version: ' . $e->getMessage();
+                $this->logWarning($module_name, 'Could not parse release version: ' . $e->getMessage());
                 continue;
               }
               catch (\Throwable $e) {
-                $this->warnings[$module_name][] = 'Caught exception while checking release: ' . $e->getMessage();
+                $this->logWarning($module_name, 'Caught exception while checking release: ' . $e->getMessage());
               }
             }
           }
         }
         catch (\Throwable $e) {
-          $this->warnings[$module_name][] = 'Caught exception while checking release data: ' . $e->getMessage();
+          $this->logWarning($module_name, 'Caught exception while checking release data: ' . $e->getMessage());
         }
       }
     }
@@ -149,20 +173,50 @@ class Checker {
       foreach ($user_mods as $module_name) {
         try {
           $package_name = $user . '/' . $module_name;
-          $packagist_base = "https://packagist.org/packages/" . $user . "/" . $module_name;
-          $url = "https://repo.packagist.org/p2/" . $user . "/$module_name.json";
+          $cid = 'bc_drupal_package_manager:' . $package_name;
+
+          if ($cache = \Drupal::cache()->get($cid)) {
+            $this->packagistData[$user][$module_name] = $cache->data;
+            continue;
+          }
+
+          $url = "https://repo.packagist.org/p2/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
 
           // Initiate curl and get info from Packagist.
           $ch = curl_init();
           curl_setopt($ch, CURLOPT_RETURNTRANSFER, TRUE);
           curl_setopt($ch, CURLOPT_URL, $url);
+          curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+          curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+          curl_setopt($ch, CURLOPT_USERAGENT, 'bluecadet/bc_drupal_package_manager');
           $result = curl_exec($ch);
+
+          if ($result === FALSE) {
+            $this->logWarning($module_name, 'Curl error fetching Packagist data for ' . $package_name . ': ' . curl_error($ch));
+            curl_close($ch);
+            continue;
+          }
+
+          $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
           curl_close($ch);
 
-          $this->packagistData[$user][$module_name] = json_decode($result, TRUE);
+          if ($status_code !== 200) {
+            $this->logWarning($module_name, "Packagist returned HTTP $status_code for $package_name.");
+            continue;
+          }
+
+          $data = json_decode($result, TRUE);
+
+          if (!is_array($data)) {
+            $this->logWarning($module_name, 'Could not decode Packagist response for ' . $package_name . '.');
+            continue;
+          }
+
+          $this->packagistData[$user][$module_name] = $data;
+          \Drupal::cache()->set($cid, $data, time() + self::CACHE_TTL);
         }
         catch (\Throwable $e) {
-          $this->warnings[$module_name][] = 'Caught exception while fetching Packagist data: ' . $e->getMessage();
+          $this->logWarning($module_name, 'Caught exception while fetching Packagist data: ' . $e->getMessage());
         }
       }
     }
