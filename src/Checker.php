@@ -49,20 +49,30 @@ class Checker {
             $this->links[$user][$module_name] = $packagist_base;
             $this->titles[$user][$module_name] = $this->projects[$module_name]['info']['name'];
 
+            $exisiting_version = NULL;
             try {
-              $exisiting_version = "";
               if (isset($this->projects[$module_name]['existing_version']) && $this->validVersionString($this->projects[$module_name]['existing_version'], FALSE)) {
                 $exisiting_version = Version::parse($this->projects[$module_name]['existing_version'], FALSE);
               }
             }
             catch (SemverException $e) {
-              // ksm($e);
-              break;
+              $this->warnings[$module_name][] = 'Could not parse existing version: ' . $e->getMessage();
+              continue;
+            }
+
+            if (!$exisiting_version instanceof Version) {
+              $this->warnings[$module_name][] = 'No valid existing version available for ' . $module_name . '; skipping update check.';
+              continue;
+            }
+
+            if (!isset($this->packagistData[$user][$module_name]['packages'][$package_name]) || !is_array($this->packagistData[$user][$module_name]['packages'][$package_name])) {
+              $this->warnings[$module_name][] = 'No Packagist data available for ' . $package_name . '; skipping update check.';
+              continue;
             }
 
             $packages = $this->packagistData[$user][$module_name]['packages'][$package_name];
 
-            // Sort pakcages from packagist lowest to highest.
+            // Sort packages from Packagist lowest to highest.
             usort($packages, [$this, 'orderPackages']);
 
             $this->statuses[$user][$module_name] = UpdateManagerInterface::CURRENT;
@@ -118,19 +128,16 @@ class Checker {
                 }
               }
               catch (SemverException $e) {
-                // ksm($e);
-                break;
+                $this->warnings[$module_name][] = 'Could not parse release version: ' . $e->getMessage();
+                continue;
               }
-              catch (\Exception $e) {
+              catch (\Throwable $e) {
                 $this->warnings[$module_name][] = 'Caught exception while checking release: ' . $e->getMessage();
-                // ksm($e);
               }
             }
           }
         }
-        catch  (\Exception $e) {
-          // ksm($e);
-          // ksm("data error");
+        catch (\Throwable $e) {
           $this->warnings[$module_name][] = 'Caught exception while checking release data: ' . $e->getMessage();
         }
       }
@@ -155,8 +162,8 @@ class Checker {
 
           $this->packagistData[$user][$module_name] = json_decode($result, TRUE);
         }
-        catch  (\Exception $e) {
-          ksm("curl error");
+        catch (\Throwable $e) {
+          $this->warnings[$module_name][] = 'Caught exception while fetching Packagist data: ' . $e->getMessage();
         }
       }
     }
