@@ -3,7 +3,6 @@
 namespace Bluecadet\DrupalPackageManager;
 
 use Drupal\update\UpdateManagerInterface;
-use z4kn4fein\SemVer\Constraints\Constraint;
 use z4kn4fein\SemVer\Inc;
 use z4kn4fein\SemVer\SemverException;
 use z4kn4fein\SemVer\Version;
@@ -102,27 +101,27 @@ class Checker {
 
                     $this->releases[$user][$module_name][$package_data['version']] = $release_data;
 
-                    // Is is also?
-                    if (Version::lessThan($exisiting_version, $release_version)) {
+                    // Packages are processed lowest to highest, so the last
+                    // one assigned here ends up being the highest available.
+                    $this->latestVersions[$user][$module_name] = $package_data['version'];
 
-                      // I want to see all versions higher than current regardless.
-                      // if (!$release_version->isPreRelease()) {
-                        $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
-                      // }
+                    // I want to see all versions higher than current regardless of stability.
+                    $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
 
-                      // Is it latest?
-                      // Is it recommended?
+                    // Any newer release (regardless of major) means the
+                    // module is no longer current.
+                    if (!$release_version->isPreRelease()) {
+                      $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
+
+                      // The recommended version is the highest stable
+                      // release within the currently installed major.
                       if ($exisiting_version->getMajor() == $release_version->getMajor()) {
-
-                        $constraint = Constraint::parse("^" . $exisiting_version->__toString());
-                        if (!$release_version->isPreRelease()) {
-                          $this->statuses[$user][$module_name] = UpdateManagerInterface::NOT_CURRENT;
-                        }
-
-                        if ($release_version->isPreRelease() && $exisiting_version->getMinor() == $release_version->getMinor())  {
-                          $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor() . ".x"] = $package_data['version'];
-                        }
+                        $this->recommended[$user][$module_name] = $package_data['version'];
                       }
+                    }
+
+                    if ($release_version->isPreRelease() && $exisiting_version->getMajor() == $release_version->getMajor() && $exisiting_version->getMinor() == $release_version->getMinor()) {
+                      $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor() . ".x"] = $package_data['version'];
                     }
                   }
                 }
@@ -182,12 +181,9 @@ class Checker {
 
   protected function orderPackages($a, $b) {
     try {
-
-      // ksm($a['version'], $b['version'], Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE), '>'));
-      return Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE), '>');
+      return Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE));
     }
-    catch(\Exception $e) {
-      // ksm("error", $a['version'], $b['version']);
+    catch (\Exception $e) {
       return 0;
     }
   }
@@ -242,7 +238,7 @@ class Checker {
       $this->getUpdates();
     }
 
-    return $this->latestVersion[$user][$module] ?? "";
+    return $this->latestVersions[$user][$module] ?? "";
   }
 
   public function getRecommended(string $user, string $module):string {
