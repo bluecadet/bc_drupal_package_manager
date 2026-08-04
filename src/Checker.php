@@ -9,11 +9,6 @@ use z4kn4fein\SemVer\Version;
 
 class Checker {
 
-  /**
-   * How long to cache a Packagist response, in seconds.
-   */
-  const CACHE_TTL = 21600;
-
   protected $modules = [];
   protected $projects = [];
 
@@ -41,13 +36,16 @@ class Checker {
   /**
    * Records a warning against a module and logs it, so failures are never
    * silently discarded even if a caller never inspects getWarnings().
+   *
+   * TODO: this package isn't a Drupal module and shouldn't assume \Drupal
+   * is bootstrapped, so this uses error_log() rather than Drupal's logger.
+   * Add support for injecting a PSR-3 LoggerInterface (which a caller could
+   * satisfy with a Drupal logger channel, Monolog, etc.) so consumers can
+   * route these warnings wherever they like.
    */
   protected function logWarning(string $module_name, string $message): void {
     $this->warnings[$module_name][] = $message;
-    \Drupal::logger('bc_drupal_package_manager')->warning('@module: @message', [
-      '@module' => $module_name,
-      '@message' => $message,
-    ]);
+    error_log("[bc_drupal_package_manager] $module_name: $message");
   }
 
   /**
@@ -173,13 +171,6 @@ class Checker {
       foreach ($user_mods as $module_name) {
         try {
           $package_name = $user . '/' . $module_name;
-          $cid = 'bc_drupal_package_manager:' . $package_name;
-
-          if ($cache = \Drupal::cache()->get($cid)) {
-            $this->packagistData[$user][$module_name] = $cache->data;
-            continue;
-          }
-
           $url = "https://repo.packagist.org/p2/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
 
           // Initiate curl and get info from Packagist.
@@ -213,7 +204,6 @@ class Checker {
           }
 
           $this->packagistData[$user][$module_name] = $data;
-          \Drupal::cache()->set($cid, $data, time() + self::CACHE_TTL);
         }
         catch (\Throwable $e) {
           $this->logWarning($module_name, 'Caught exception while fetching Packagist data: ' . $e->getMessage());

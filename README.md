@@ -37,3 +37,8 @@ function HOOK_update_status_alter(&$projects) {
 }
 
 ```
+
+## TODO
+
+- **Caching**: Packagist responses are currently fetched live on every call to `getUpdates()`. Since this package isn't a Drupal module and shouldn't assume `\Drupal` is bootstrapped, add support for injecting a cache backend (rather than hard-coding Drupal's Cache API) so repeated update checks don't re-fetch from Packagist every time.
+- **Logging**: `Checker` currently logs warnings via PHP's `error_log()`. Add support for injecting a PSR-3 `LoggerInterface`, which a caller could satisfy with a Drupal logger channel (`\Drupal::logger(...)`), Monolog, or any other PSR-3 logger.
