@@ -2,6 +2,7 @@
 
 namespace Bluecadet\DrupalPackageManager\Tests;
 
+use Bluecadet\DrupalPackageManager\Checker;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\update\UpdateManagerInterface;
 use PHPUnit\Framework\TestCase;
@@ -35,12 +36,22 @@ class CheckerTest extends TestCase {
     ];
   }
 
-  protected function packagistPackages(array $versions): array {
+  /**
+   * Builds a flat version => release-data map, as returned by
+   * https://packagist.org/packages/{vendor}/{package}.json's
+   * package.versions key. $extra_by_version optionally attaches
+   * composer.json "extra" data to specific versions, keyed by version
+   * string, to simulate maintainer-curated release-status metadata.
+   */
+  protected function packagistPackages(array $versions, array $extra_by_version = []): array {
     $packages = [];
     foreach ($versions as $version) {
-      $packages[] = ['version' => $version, 'time' => '2024-01-01T00:00:00+00:00'];
+      $packages[$version] = ['version' => $version, 'time' => '2024-01-01T00:00:00+00:00'];
+      if (isset($extra_by_version[$version])) {
+        $packages[$version]['extra'] = [Checker::EXTRA_KEY => $extra_by_version[$version]];
+      }
     }
-    return ['packages' => ['bluecadet/bluecadet_utilities' => $packages]];
+    return $packages;
   }
 
   public function testFlagsNotCurrentForNewerStableReleaseWithinSameMajor() {
@@ -154,6 +165,76 @@ class CheckerTest extends TestCase {
 
     $this->assertSame(0, $checker->getStatus('bluecadet', 'bluecadet_utilities'));
     $this->assertNotEmpty($checker->getWarnings()['bluecadet_utilities'] ?? []);
+  }
+
+  /**
+   * A maintainer-curated "recommended" entry for the installed branch
+   * (read from the latest release's composer.json "extra") should override
+   * the automatic "highest stable release in the current major" pick.
+   */
+  public function testExtraRecommendedOverridesAutomaticCalculation() {
+    $checker = new TestableChecker(
+      ['bluecadet' => ['bluecadet_utilities']],
+      ['bluecadet_utilities' => $this->project('1.5.0')]
+    );
+    $checker->setPackagistData([
+      'bluecadet' => ['bluecadet_utilities' => $this->packagistPackages(
+        ['1.5.0', '1.5.9', '1.6.0'],
+        ['1.6.0' => ['recommended' => ['1.5.9', '1.6.0']]]
+      )],
+    ]);
+    $checker->getUpdates();
+
+    // Without the override this would be '1.6.0' (highest stable in major 1).
+    $this->assertSame('1.5.9', $checker->getRecommended('bluecadet', 'bluecadet_utilities'));
+  }
+
+  /**
+   * A site running below the "minimum_supported" version for its branch
+   * should get a Drupal-native "extra" admin notice.
+   */
+  public function testBelowMinimumSupportedAddsExtraNotice() {
+    $checker = new TestableChecker(
+      ['bluecadet' => ['bluecadet_utilities']],
+      ['bluecadet_utilities' => $this->project('1.4.0')]
+    );
+    $checker->setPackagistData([
+      'bluecadet' => ['bluecadet_utilities' => $this->packagistPackages(
+        ['1.4.0', '2.0.0'],
+        ['2.0.0' => ['minimum_supported' => ['1.4.12']]]
+      )],
+    ]);
+    $checker->getUpdates();
+
+    $extra = $checker->getExtra('bluecadet', 'bluecadet_utilities');
+    $this->assertNotEmpty($extra);
+    $this->assertSame('Below minimum supported version', $extra[0]['label'] ?? NULL);
+  }
+
+  /**
+   * A version listed in "security" should be marked with the Drupal-native
+   * terms shape ProjectRelease::isSecurityRelease() reads, and surfaced
+   * via getSecurityUpdates() (Drupal's "security updates" project key).
+   */
+  public function testSecurityVersionsAreMarkedAndSurfaced() {
+    $checker = new TestableChecker(
+      ['bluecadet' => ['bluecadet_utilities']],
+      ['bluecadet_utilities' => $this->project('1.0.0')]
+    );
+    $checker->setPackagistData([
+      'bluecadet' => ['bluecadet_utilities' => $this->packagistPackages(
+        ['1.0.0', '1.1.0', '1.2.0'],
+        ['1.2.0' => ['security' => ['1.1.0']]]
+      )],
+    ]);
+    $checker->getUpdates();
+
+    $releases = $checker->getReleases('bluecadet', 'bluecadet_utilities');
+    $this->assertSame(['Release type' => ['Security update']], $releases['1.1.0']['terms'] ?? NULL);
+
+    $security_updates = $checker->getSecurityUpdates('bluecadet', 'bluecadet_utilities');
+    $this->assertCount(1, $security_updates);
+    $this->assertSame('1.1.0', $security_updates[0]['version'] ?? NULL);
   }
 
 }

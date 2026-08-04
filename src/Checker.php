@@ -9,6 +9,12 @@ use z4kn4fein\SemVer\Version;
 
 class Checker {
 
+  /**
+   * The key under composer.json's "extra" that holds Bluecadet's own
+   * release-status metadata (minimum_supported/recommended/security).
+   */
+  const EXTRA_KEY = 'bluecadet-package-manager';
+
   protected $modules = [];
   protected $projects = [];
 
@@ -26,6 +32,8 @@ class Checker {
   protected $recommended = [];
   protected $also = [];
   protected $releases = [];
+  protected $securityUpdates = [];
+  protected $extra = [];
 
   public function __construct(array $modules, array $projects) {
     $this->modules = $modules;
@@ -85,12 +93,12 @@ class Checker {
               continue;
             }
 
-            if (!isset($this->packagistData[$user][$module_name]['packages'][$package_name]) || !is_array($this->packagistData[$user][$module_name]['packages'][$package_name])) {
+            if (!isset($this->packagistData[$user][$module_name]) || !is_array($this->packagistData[$user][$module_name])) {
               $this->logWarning($module_name, 'No Packagist data available for ' . $package_name . '; skipping update check.');
               continue;
             }
 
-            $packages = $this->packagistData[$user][$module_name]['packages'][$package_name];
+            $packages = array_values($this->packagistData[$user][$module_name]);
 
             // Sort packages from Packagist lowest to highest.
             usort($packages, [$this, 'orderPackages']);
@@ -155,6 +163,8 @@ class Checker {
                 $this->logWarning($module_name, 'Caught exception while checking release: ' . $e->getMessage());
               }
             }
+
+            $this->applyReleaseStatusMetadata($user, $module_name, $existing_version, $packages);
           }
         }
         catch (\Throwable $e) {
@@ -164,13 +174,62 @@ class Checker {
     }
   }
 
+  /**
+   * Applies the maintainer-curated minimum_supported/recommended/security
+   * metadata from composer.json's "extra" key (read from whichever release
+   * currently has the highest version, since older tags can't be edited
+   * after the fact) on top of the automatic semver-based calculations
+   * already performed in getUpdates().
+   */
+  protected function applyReleaseStatusMetadata(string $user, string $module_name, Version $existing_version, array $packages): void {
+    $latest_release = $this->findLatestRelease($packages);
+    $extra = $latest_release['extra'][self::EXTRA_KEY] ?? NULL;
+
+    if (!is_array($extra)) {
+      return;
+    }
+
+    // A maintainer-curated recommendation overrides the automatic "highest
+    // stable release in the current major" calculation from getUpdates().
+    if ($match = $this->findMatchingBranchVersion($existing_version, $extra['recommended'] ?? [])) {
+      $this->recommended[$user][$module_name] = (string) $match;
+    }
+
+    // Flag sites running below the minimum supported version for their
+    // branch via Drupal's native "extra" admin-notice mechanism.
+    if (($match = $this->findMatchingBranchVersion($existing_version, $extra['minimum_supported'] ?? [])) && $existing_version->isLessThan($match)) {
+      $this->extra[$user][$module_name][] = [
+        'class' => ['bluecadet-below-minimum-supported'],
+        'label' => 'Below minimum supported version',
+        'data' => "The installed version ($existing_version) is older than the minimum supported version ($match) for this branch. Update as soon as possible.",
+      ];
+    }
+
+    // Mark any release already recorded in $this->releases as a security
+    // release, matching the shape Drupal's own ProjectRelease::
+    // isSecurityRelease() expects, and collect them for "security updates".
+    foreach ($extra['security'] ?? [] as $security_version) {
+      if (!is_string($security_version) || !isset($this->releases[$user][$module_name][$security_version])) {
+        continue;
+      }
+      $this->releases[$user][$module_name][$security_version]['terms'] = ['Release type' => ['Security update']];
+      $this->securityUpdates[$user][$module_name][] = $this->releases[$user][$module_name][$security_version];
+    }
+  }
+
   protected function getPackagistData() {
 
     foreach ($this->modules as $user => $user_mods) {
       foreach ($user_mods as $module_name) {
         try {
           $package_name = $user . '/' . $module_name;
-          $url = "https://repo.packagist.org/p2/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
+
+          // The p2/ "provider" endpoint is meant for Composer's own
+          // dependency resolver and minifies repeated values (including
+          // "extra") down to the literal string "__unset", so it isn't
+          // reliable for reading custom composer.json "extra" metadata.
+          // The plain package API returns full, unminified data instead.
+          $url = "https://packagist.org/packages/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
 
           // Initiate curl and get info from Packagist.
           $ch = curl_init();
@@ -197,12 +256,12 @@ class Checker {
 
           $data = json_decode($result, TRUE);
 
-          if (!is_array($data)) {
+          if (!isset($data['package']['versions']) || !is_array($data['package']['versions'])) {
             $this->logWarning($module_name, 'Could not decode Packagist response for ' . $package_name . '.');
             continue;
           }
 
-          $this->packagistData[$user][$module_name] = $data;
+          $this->packagistData[$user][$module_name] = $data['package']['versions'];
         }
         catch (\Throwable $e) {
           $this->logWarning($module_name, 'Caught exception while fetching Packagist data: ' . $e->getMessage());
@@ -229,6 +288,69 @@ class Checker {
     catch (\Exception $e) {
       return 0;
     }
+  }
+
+  /**
+   * Finds the release with the highest parseable version in $packages,
+   * regardless of whether it's newer than any particular existing version.
+   * This is the release whose composer.json "extra" data is treated as the
+   * authoritative source for minimum_supported/recommended/security, since
+   * older tags can't be edited after the fact.
+   */
+  protected function findLatestRelease(array $packages): ?array {
+    $latest_version = NULL;
+    $latest_release = NULL;
+
+    foreach ($packages as $package_data) {
+      if (!isset($package_data['version']) || !$this->validVersionString($package_data['version'], FALSE)) {
+        continue;
+      }
+      try {
+        $version = Version::parse($package_data['version'], FALSE);
+      }
+      catch (SemverException $e) {
+        continue;
+      }
+      if ($latest_version === NULL || $latest_version->isLessThan($version)) {
+        $latest_version = $version;
+        $latest_release = $package_data;
+      }
+    }
+
+    return $latest_release;
+  }
+
+  /**
+   * Picks the entry in $candidates that best matches $target's branch:
+   * an exact major.minor match if one exists, otherwise the highest entry
+   * sharing the same major, otherwise NULL if nothing matches.
+   */
+  protected function findMatchingBranchVersion(Version $target, array $candidates): ?Version {
+    $same_major_minor = NULL;
+    $same_major = NULL;
+
+    foreach ($candidates as $candidate) {
+      if (!is_string($candidate) || !$this->validVersionString($candidate, FALSE)) {
+        continue;
+      }
+      try {
+        $candidate_version = Version::parse($candidate, FALSE);
+      }
+      catch (SemverException $e) {
+        continue;
+      }
+      if ($candidate_version->getMajor() !== $target->getMajor()) {
+        continue;
+      }
+      if ($candidate_version->getMinor() === $target->getMinor()) {
+        $same_major_minor = $candidate_version;
+      }
+      if ($same_major === NULL || $same_major->isLessThan($candidate_version)) {
+        $same_major = $candidate_version;
+      }
+    }
+
+    return $same_major_minor ?? $same_major;
   }
 
 
@@ -292,6 +414,22 @@ class Checker {
     return $this->recommended[$user][$module] ?? "";
   }
 
+  public function getSecurityUpdates(string $user, string $module):array {
+    if (empty($this->packagistData)) {
+      $this->getUpdates();
+    }
+
+    return $this->securityUpdates[$user][$module] ?? [];
+  }
+
+  public function getExtra(string $user, string $module):array {
+    if (empty($this->packagistData)) {
+      $this->getUpdates();
+    }
+
+    return $this->extra[$user][$module] ?? [];
+  }
+
   public function updateDrupalModulePackage(array $package, string $user, string $module_name):array {
 
     $package['link'] = $this->getLink($user, $module_name);
@@ -310,6 +448,12 @@ class Checker {
     }
     if ($recommended = $this->getRecommended($user, $module_name)) {
       $package['recommended'] = $recommended;
+    }
+    if ($security_updates = $this->getSecurityUpdates($user, $module_name)) {
+      $package['security updates'] = $security_updates;
+    }
+    if ($extra = $this->getExtra($user, $module_name)) {
+      $package['extra'] = array_merge($package['extra'] ?? [], $extra);
     }
 
     return $package;
