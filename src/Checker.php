@@ -13,7 +13,6 @@ class Checker {
   protected $projects = [];
 
   protected $packagistData = [];
-  // protected $packagistData = [];
 
   protected $errors = [];
   protected $warnings = [];

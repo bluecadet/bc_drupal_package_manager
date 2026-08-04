@@ -11,11 +11,12 @@
   "support": {
     "issues": "https://github.com/bluecadet/bc_drupal_package_manager/issues"
   },
-  "license": "GPL-2.0+",
-  "minimum-stability": "dev",
+  "license": "GPL-2.0-or-later",
   "prefer-stable": true,
   "require": {
     "php": "^8.1",
+    "ext-curl": "*",
+    "drupal/core": "^10.1 || ^11",
     "z4kn4fein/php-semver": "^3.0"
   },
   "autoload": {
