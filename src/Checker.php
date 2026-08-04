@@ -69,10 +69,10 @@ class Checker {
             $this->links[$user][$module_name] = $packagist_base;
             $this->titles[$user][$module_name] = $this->projects[$module_name]['info']['name'];
 
-            $exisiting_version = NULL;
+            $existing_version = NULL;
             try {
               if (isset($this->projects[$module_name]['existing_version']) && $this->validVersionString($this->projects[$module_name]['existing_version'], FALSE)) {
-                $exisiting_version = Version::parse($this->projects[$module_name]['existing_version'], FALSE);
+                $existing_version = Version::parse($this->projects[$module_name]['existing_version'], FALSE);
               }
             }
             catch (SemverException $e) {
@@ -80,7 +80,7 @@ class Checker {
               continue;
             }
 
-            if (!$exisiting_version instanceof Version) {
+            if (!$existing_version instanceof Version) {
               $this->logWarning($module_name, 'No valid existing version available for ' . $module_name . '; skipping update check.');
               continue;
             }
@@ -104,7 +104,7 @@ class Checker {
                 if (isset($package_data['version']) && $this->validVersionString($package_data['version'], FALSE)) {
                   $release_version = Version::parse($package_data['version'], FALSE);
 
-                  if ($exisiting_version->isLessThan($release_version)) {
+                  if ($existing_version->isLessThan($release_version)) {
 
                     // Create release data.
                     $release_data = [
@@ -136,12 +136,12 @@ class Checker {
 
                       // The recommended version is the highest stable
                       // release within the currently installed major.
-                      if ($exisiting_version->getMajor() == $release_version->getMajor()) {
+                      if ($existing_version->getMajor() == $release_version->getMajor()) {
                         $this->recommended[$user][$module_name] = $package_data['version'];
                       }
                     }
 
-                    if ($release_version->isPreRelease() && $exisiting_version->getMajor() == $release_version->getMajor() && $exisiting_version->getMinor() == $release_version->getMinor()) {
+                    if ($release_version->isPreRelease() && $existing_version->getMajor() == $release_version->getMajor() && $existing_version->getMinor() == $release_version->getMinor()) {
                       $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor() . ".x"] = $package_data['version'];
                     }
                   }
