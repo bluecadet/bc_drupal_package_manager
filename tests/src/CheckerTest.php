@@ -6,7 +6,6 @@ use Bluecadet\DrupalPackageManager\Checker;
 use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\update\UpdateManagerInterface;
 use PHPUnit\Framework\TestCase;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 
 /**
  * @coversDefaultClass \Bluecadet\DrupalPackageManager\Checker
@@ -14,18 +13,21 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 class CheckerTest extends TestCase {
 
   /**
-   * Mocks Drupal's container so \Drupal::service('module_handler') resolves.
+   * Builds a TestableChecker with a mocked, always-enabled module handler.
+   *
+   * @param array $modules
+   *   The modules to check, keyed by Packagist vendor name.
+   * @param array $projects
+   *   Drupal's project data, keyed by module machine name.
+   *
+   * @return \Bluecadet\DrupalPackageManager\Tests\TestableChecker
+   *   The constructed checker.
    */
-  protected function setUp(): void {
-    parent::setUp();
-
+  protected function checker(array $modules, array $projects): TestableChecker {
     $moduleHandler = $this->createMock(ModuleHandlerInterface::class);
     $moduleHandler->method('moduleExists')->willReturn(TRUE);
 
-    $container = $this->createMock(ContainerInterface::class);
-    $container->method('get')->with('module_handler')->willReturn($moduleHandler);
-
-    \Drupal::setContainer($container);
+    return new TestableChecker($modules, $projects, $moduleHandler);
   }
 
   /**
@@ -72,7 +74,7 @@ class CheckerTest extends TestCase {
    * A newer stable release in the current major is recommended and flagged.
    */
   public function testFlagsNotCurrentForNewerStableReleaseWithinSameMajor() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.0.0')]
     );
@@ -97,7 +99,7 @@ class CheckerTest extends TestCase {
    * ever set inside the "same major" branch.
    */
   public function testFlagsNotCurrentForNewerMajorRelease() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.5.0')]
     );
@@ -119,7 +121,7 @@ class CheckerTest extends TestCase {
    * a real ascending sort for this to work.
    */
   public function testLatestVersionIsCorrectRegardlessOfInputOrder() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.0.0')]
     );
@@ -137,7 +139,7 @@ class CheckerTest extends TestCase {
    * It should appear as an "x.y.x" entry in also() instead.
    */
   public function testPreReleaseDoesNotAffectStatus() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.0.0')]
     );
@@ -159,7 +161,7 @@ class CheckerTest extends TestCase {
    * recorded instead.
    */
   public function testSkipsModuleWithMissingExistingVersionWithoutCrashing() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => ['name' => 'bluecadet_utilities', 'info' => ['name' => 'Bluecadet Utilities']]]
     );
@@ -179,7 +181,7 @@ class CheckerTest extends TestCase {
    * should now be skipped gracefully with a warning recorded instead.
    */
   public function testSkipsModuleWithMissingPackagistDataWithoutCrashing() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.0.0')]
     );
@@ -198,7 +200,7 @@ class CheckerTest extends TestCase {
    * "highest stable release in the current major" calculation.
    */
   public function testExtraRecommendedOverridesAutomaticCalculation() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.5.0')]
     );
@@ -220,7 +222,7 @@ class CheckerTest extends TestCase {
    * The notice uses Drupal's native "extra" {class, label, data} shape.
    */
   public function testBelowMinimumSupportedAddsExtraNotice() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.4.0')]
     );
@@ -245,7 +247,7 @@ class CheckerTest extends TestCase {
    * getSecurityUpdates() (Drupal's "security updates" project key).
    */
   public function testSecurityVersionsAreMarkedAndSurfaced() {
-    $checker = new TestableChecker(
+    $checker = $this->checker(
       ['bluecadet' => ['bluecadet_utilities']],
       ['bluecadet_utilities' => $this->project('1.0.0')]
     );

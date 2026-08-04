@@ -2,6 +2,7 @@
 
 namespace Bluecadet\DrupalPackageManager;
 
+use Drupal\Core\Extension\ModuleHandlerInterface;
 use Drupal\update\UpdateManagerInterface;
 use z4kn4fein\SemVer\SemverException;
 use z4kn4fein\SemVer\Version;
@@ -40,6 +41,13 @@ class Checker {
    *   An array of project data, keyed by module machine name.
    */
   protected $projects = [];
+
+  /**
+   * The module handler used to check whether a module is enabled.
+   *
+   * @var \Drupal\Core\Extension\ModuleHandlerInterface
+   */
+  protected $moduleHandler;
 
   /**
    * Packagist release data fetched via getPackagistData().
@@ -154,10 +162,14 @@ class Checker {
    *   The modules to check, keyed by Packagist vendor name; see $modules.
    * @param array $projects
    *   Drupal's project data, keyed by module machine name; see $projects.
+   * @param \Drupal\Core\Extension\ModuleHandlerInterface|null $moduleHandler
+   *   The module handler to use, or NULL to look one up via
+   *   \Drupal::service('module_handler').
    */
-  public function __construct(array $modules, array $projects) {
+  public function __construct(array $modules, array $projects, ?ModuleHandlerInterface $moduleHandler = NULL) {
     $this->modules = $modules;
     $this->projects = $projects;
+    $this->moduleHandler = $moduleHandler ?? \Drupal::service('module_handler');
   }
 
   /**
@@ -203,7 +215,6 @@ class Checker {
    */
   public function getUpdates():void {
 
-    $moduleHandler = \Drupal::service('module_handler');
     $this->getPackagistData();
 
     foreach ($this->modules as $user => $user_mods) {
@@ -212,7 +223,7 @@ class Checker {
         $packagist_base = "https://packagist.org/packages/" . $user . "/" . $module_name;
 
         try {
-          if ($moduleHandler->moduleExists($module_name)) {
+          if ($this->moduleHandler->moduleExists($module_name)) {
             $this->links[$user][$module_name] = $packagist_base;
             $this->titles[$user][$module_name] = $this->projects[$module_name]['info']['name'];
 
