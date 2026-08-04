@@ -401,7 +401,15 @@ class Checker {
           // reliable for reading custom composer.json "extra" metadata.
           //
           // The plain package API returns full, unminified data instead.
-          $url = "https://packagist.org/packages/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
+          //
+          // Packagist fronts this endpoint with a CDN (s-maxage=43200, ~12
+          // hours) keyed on the full URL including query string, and per-edge
+          // caches can lag the origin by that much. The cache-busting query
+          // param below forces a fresh origin fetch every time so newly
+          // published composer.json "extra" data isn't hidden behind a stale
+          // edge cache; it does mean Packagist's own caching is bypassed on
+          // every call.
+          $url = "https://packagist.org/packages/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json?_=" . time();
 
           // Initiate curl and get info from Packagist.
           $ch = curl_init();
