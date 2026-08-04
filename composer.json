@@ -19,12 +19,28 @@
     "drupal/core": "^10.1 || ^11",
     "z4kn4fein/php-semver": "^3.0"
   },
+  "require-dev": {
+    "phpunit/phpunit": "^10"
+  },
+  "scripts": {
+    "test": "phpunit"
+  },
   "autoload": {
     "psr-4": {
       "Bluecadet\\DrupalPackageManager\\": "src/"
     }
   },
+  "autoload-dev": {
+    "psr-4": {
+      "Bluecadet\\DrupalPackageManager\\Tests\\": "tests/src/",
+      "Drupal\\update\\": "vendor/drupal/core/modules/update/src/"
+    }
+  },
   "config": {
-    "sort-packages": true
+    "sort-packages": true,
+    "allow-plugins": {
+      "symfony/runtime": false,
+      "drupal/core-composer-scaffold": false
+    }
   }
 }
