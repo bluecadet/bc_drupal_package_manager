@@ -20,10 +20,12 @@
     "z4kn4fein/php-semver": "^3.0"
   },
   "require-dev": {
+    "drupal/coder": "^9.0",
     "phpunit/phpunit": "^10"
   },
   "scripts": {
-    "test": "phpunit"
+    "test": "phpunit",
+    "lint": "phpcs"
   },
   "autoload": {
     "psr-4": {
@@ -40,7 +42,8 @@
     "sort-packages": true,
     "allow-plugins": {
       "symfony/runtime": false,
-      "drupal/core-composer-scaffold": false
+      "drupal/core-composer-scaffold": false,
+      "dealerdirect/phpcodesniffer-composer-installer": false
     }
   }
 }

@@ -3,52 +3,179 @@
 namespace Bluecadet\DrupalPackageManager;
 
 use Drupal\update\UpdateManagerInterface;
-use z4kn4fein\SemVer\Inc;
 use z4kn4fein\SemVer\SemverException;
 use z4kn4fein\SemVer\Version;
 
+/**
+ * Checks Packagist for available updates to custom Bluecadet Drupal modules.
+ *
+ * Computes the same status/recommended/latest_version/releases data that
+ * Drupal's own update.module calculates for drupal.org-hosted projects, but
+ * sourced from Packagist and composer.json metadata instead, so it can be
+ * merged into $projects from hook_update_status_alter().
+ */
 class Checker {
 
   /**
-   * The key under composer.json's "extra" that holds Bluecadet's own
-   * release-status metadata (minimum_supported/recommended/security).
+   * The composer.json "extra" key holding Bluecadet's release-status data.
+   *
+   * Points at the minimum_supported/recommended/security metadata
+   * described in the README.
    */
   const EXTRA_KEY = 'bluecadet-package-manager';
 
+  /**
+   * The modules to check, keyed by Packagist vendor name.
+   *
+   * @var array
+   *   An array of arrays of module machine names, keyed by vendor name, e.g.
+   *   ['bluecadet' => ['bluecadet_utilities', 'bluecadet_file_struct']].
+   */
   protected $modules = [];
+
+  /**
+   * The Drupal project data passed in from hook_update_status_alter().
+   *
+   * @var array
+   *   An array of project data, keyed by module machine name.
+   */
   protected $projects = [];
 
+  /**
+   * Packagist release data fetched via getPackagistData().
+   *
+   * @var array
+   *   An array of version => release-data maps, keyed by vendor name and
+   *   then module machine name.
+   */
   protected $packagistData = [];
 
+  /**
+   * Unused: reserved for future error tracking.
+   *
+   * @var array
+   */
   protected $errors = [];
+
+  /**
+   * Warnings recorded by logWarning(), keyed by module machine name.
+   *
+   * @var array
+   */
   protected $warnings = [];
+
+  /**
+   * Unused: reserved for future informational messages.
+   *
+   * @var array
+   */
   protected $info = [];
 
-
+  /**
+   * Packagist project links, keyed by vendor name and then module name.
+   *
+   * @var array
+   */
   protected $links = [];
+
+  /**
+   * Project titles, keyed by vendor name and then module name.
+   *
+   * @var array
+   */
   protected $titles = [];
+
+  /**
+   * UpdateManagerInterface status constants, keyed by vendor and module name.
+   *
+   * @var array
+   */
   protected $statuses = [];
+
+  /**
+   * The highest available version newer than what's installed.
+   *
+   * Keyed by vendor name and then module name.
+   *
+   * @var array
+   */
   protected $latestVersions = [];
+
+  /**
+   * The recommended version to update to, keyed by vendor and module name.
+   *
+   * @var array
+   */
   protected $recommended = [];
+
+  /**
+   * Other notable available versions for a module.
+   *
+   * Higher majors and pre-releases on the current branch, keyed by vendor
+   * name, module name, and then a "major.minor" or "major.minor.x" branch
+   * label.
+   *
+   * @var array
+   */
   protected $also = [];
+
+  /**
+   * Release data for every version newer than what's installed.
+   *
+   * Keyed by vendor name, module name, and then version string.
+   *
+   * @var array
+   */
   protected $releases = [];
+
+  /**
+   * Release data for versions flagged as security releases.
+   *
+   * Sourced from composer.json's "extra" key, keyed by vendor name and
+   * then module name.
+   *
+   * @var array
+   */
   protected $securityUpdates = [];
+
+  /**
+   * Drupal-native {class, label, data} admin notices.
+   *
+   * Keyed by vendor name and then module name.
+   *
+   * @var array
+   */
   protected $extra = [];
 
+  /**
+   * Constructs a Checker.
+   *
+   * @param array $modules
+   *   The modules to check, keyed by Packagist vendor name; see $modules.
+   * @param array $projects
+   *   Drupal's project data, keyed by module machine name; see $projects.
+   */
   public function __construct(array $modules, array $projects) {
     $this->modules = $modules;
     $this->projects = $projects;
   }
 
   /**
-   * Records a warning against a module and logs it, so failures are never
-   * silently discarded even if a caller never inspects getWarnings().
+   * Records a warning against a module and logs it.
    *
-   * TODO: this package isn't a Drupal module and shouldn't assume \Drupal
-   * is bootstrapped, so this uses error_log() rather than Drupal's logger.
-   * Add support for injecting a PSR-3 LoggerInterface (which a caller could
-   * satisfy with a Drupal logger channel, Monolog, etc.) so consumers can
-   * route these warnings wherever they like.
+   * This ensures failures are never silently discarded even if a caller
+   * never inspects getWarnings().
+   *
+   * @param string $module_name
+   *   The module machine name the warning applies to.
+   * @param string $message
+   *   The warning message.
+   *
+   * @todo This package isn't a Drupal module and shouldn't assume \Drupal
+   *   is bootstrapped, so this uses error_log() rather than Drupal's logger.
+   *   Add support for injecting a PSR-3 LoggerInterface (which a caller
+   *   could satisfy with a Drupal logger channel, Monolog, etc.) so
+   *   consumers can route these warnings wherever they like.
    */
   protected function logWarning(string $module_name, string $message): void {
     $this->warnings[$module_name][] = $message;
@@ -57,11 +184,23 @@ class Checker {
 
   /**
    * Returns all warnings recorded so far, keyed by module name.
+   *
+   * @return array
+   *   An array of arrays of warning message strings, keyed by module
+   *   machine name.
    */
   public function getWarnings(): array {
     return $this->warnings;
   }
 
+  /**
+   * Fetches Packagist data and calculates update status for every module.
+   *
+   * Populates $links, $titles, $statuses, $releases, $also,
+   * $latestVersions, $recommended, $securityUpdates, and $extra for every
+   * module in $modules. Called lazily by the get*() methods below the
+   * first time any of them is invoked.
+   */
   public function getUpdates():void {
 
     $moduleHandler = \Drupal::service('module_handler');
@@ -134,7 +273,8 @@ class Checker {
                     // one assigned here ends up being the highest available.
                     $this->latestVersions[$user][$module_name] = $package_data['version'];
 
-                    // I want to see all versions higher than current regardless of stability.
+                    // Every version higher than current is recorded here,
+                    // regardless of stability.
                     $this->also[$user][$module_name][$release_version->getMajor() . "." . $release_version->getMinor()] = $package_data['version'];
 
                     // Any newer release (regardless of major) means the
@@ -175,11 +315,23 @@ class Checker {
   }
 
   /**
-   * Applies the maintainer-curated minimum_supported/recommended/security
-   * metadata from composer.json's "extra" key (read from whichever release
-   * currently has the highest version, since older tags can't be edited
-   * after the fact) on top of the automatic semver-based calculations
-   * already performed in getUpdates().
+   * Applies maintainer-curated release-status metadata on top of getUpdates().
+   *
+   * Reads the "bluecadet-package-manager" block from composer.json's
+   * "extra" key on whichever release currently has the highest version
+   * (older tags can't be edited after the fact, so this is always read
+   * from a single, current source), and uses it to override/augment the
+   * automatic semver-based calculations already performed in getUpdates().
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module_name
+   *   The module machine name.
+   * @param \z4kn4fein\SemVer\Version $existing_version
+   *   The currently installed version.
+   * @param array $packages
+   *   The full list of release data for this module, as returned by
+   *   Packagist.
    */
   protected function applyReleaseStatusMetadata(string $user, string $module_name, Version $existing_version, array $packages): void {
     $latest_release = $this->findLatestRelease($packages);
@@ -217,6 +369,14 @@ class Checker {
     }
   }
 
+  /**
+   * Fetches release data for every module from Packagist and caches it.
+   *
+   * Populates $packagistData with a version => release-data map for each
+   * module, keyed by vendor name and then module machine name. Uses
+   * Packagist's plain package API rather than the p2/ "provider" endpoint;
+   * see the comment above the $url assignment below for why.
+   */
   protected function getPackagistData() {
 
     foreach ($this->modules as $user => $user_mods) {
@@ -228,6 +388,7 @@ class Checker {
           // dependency resolver and minifies repeated values (including
           // "extra") down to the literal string "__unset", so it isn't
           // reliable for reading custom composer.json "extra" metadata.
+          //
           // The plain package API returns full, unminified data instead.
           $url = "https://packagist.org/packages/" . rawurlencode($user) . "/" . rawurlencode($module_name) . ".json";
 
@@ -242,12 +403,10 @@ class Checker {
 
           if ($result === FALSE) {
             $this->logWarning($module_name, 'Curl error fetching Packagist data for ' . $package_name . ': ' . curl_error($ch));
-            curl_close($ch);
             continue;
           }
 
           $status_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-          curl_close($ch);
 
           if ($status_code !== 200) {
             $this->logWarning($module_name, "Packagist returned HTTP $status_code for $package_name.");
@@ -270,6 +429,18 @@ class Checker {
     }
   }
 
+  /**
+   * Determines whether a version string can be parsed as a semantic version.
+   *
+   * @param string $version
+   *   The version string to check.
+   * @param bool $strict
+   *   Whether to require strict SemVer compliance. FALSE (the default)
+   *   allows partial versions like "1.0".
+   *
+   * @return bool
+   *   TRUE if the version string is parseable, FALSE otherwise.
+   */
   protected function validVersionString(string $version, bool $strict = FALSE):bool {
     try {
       Version::parse($version, $strict);
@@ -281,6 +452,19 @@ class Checker {
     return TRUE;
   }
 
+  /**
+   * Comparison callback for usort(), ordering release data low to high.
+   *
+   * @param array $a
+   *   Release data with a 'version' key.
+   * @param array $b
+   *   Release data with a 'version' key.
+   *
+   * @return int
+   *   A negative, zero, or positive integer, per usort()'s contract. Also
+   *   returns 0 (treating the pair as equal) if either version fails to
+   *   parse, e.g. a "dev-main" branch entry.
+   */
   protected function orderPackages($a, $b) {
     try {
       return Version::compare(Version::parse($a['version'], FALSE), Version::parse($b['version'], FALSE));
@@ -291,11 +475,19 @@ class Checker {
   }
 
   /**
-   * Finds the release with the highest parseable version in $packages,
-   * regardless of whether it's newer than any particular existing version.
-   * This is the release whose composer.json "extra" data is treated as the
-   * authoritative source for minimum_supported/recommended/security, since
-   * older tags can't be edited after the fact.
+   * Finds the release with the highest parseable version in $packages.
+   *
+   * This is independent of whether it's newer than any particular existing
+   * version. It's the release whose composer.json "extra" data is treated
+   * as the authoritative source for minimum_supported/recommended/security,
+   * since older tags can't be edited after the fact.
+   *
+   * @param array $packages
+   *   The full list of release data for a module, as returned by Packagist.
+   *
+   * @return array|null
+   *   The release data for the highest parseable version, or NULL if none
+   *   of the entries in $packages have a parseable version.
    */
   protected function findLatestRelease(array $packages): ?array {
     $latest_version = NULL;
@@ -321,9 +513,20 @@ class Checker {
   }
 
   /**
-   * Picks the entry in $candidates that best matches $target's branch:
-   * an exact major.minor match if one exists, otherwise the highest entry
-   * sharing the same major, otherwise NULL if nothing matches.
+   * Picks the entry in $candidates that best matches $target's branch.
+   *
+   * Prefers an exact major.minor match if one exists, otherwise falls back
+   * to the highest entry sharing the same major, otherwise returns NULL if
+   * nothing matches.
+   *
+   * @param \z4kn4fein\SemVer\Version $target
+   *   The version whose branch to match against.
+   * @param array $candidates
+   *   An array of version strings to search, e.g. from composer.json's
+   *   "extra" "recommended"/"minimum_supported" lists.
+   *
+   * @return \z4kn4fein\SemVer\Version|null
+   *   The best-matching candidate version, or NULL if none match.
    */
   protected function findMatchingBranchVersion(Version $target, array $candidates): ?Version {
     $same_major_minor = NULL;
@@ -353,10 +556,17 @@ class Checker {
     return $same_major_minor ?? $same_major;
   }
 
-
-
-
-
+  /**
+   * Returns the Packagist project link for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return string
+   *   The Packagist project URL, or an empty string if unavailable.
+   */
   public function getLink(string $user, string $module):string {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -365,6 +575,17 @@ class Checker {
     return $this->links[$user][$module] ?? "";
   }
 
+  /**
+   * Returns the human-readable project title for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return string
+   *   The project title, or an empty string if unavailable.
+   */
   public function getTitle(string $user, string $module):string {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -373,7 +594,18 @@ class Checker {
     return $this->titles[$user][$module] ?? "";
   }
 
-
+  /**
+   * Returns the update status for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return int
+   *   One of the \Drupal\update\UpdateManagerInterface status constants, or
+   *   0 if the status could not be determined.
+   */
   public function getStatus(string $user, string $module):int {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -382,6 +614,17 @@ class Checker {
     return $this->statuses[$user][$module] ?? 0;
   }
 
+  /**
+   * Returns release data for every version newer than what's installed.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return array
+   *   An array of Drupal-shaped release data, keyed by version string.
+   */
   public function getReleases(string $user, string $module):array {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -390,6 +633,18 @@ class Checker {
     return $this->releases[$user][$module] ?? [];
   }
 
+  /**
+   * Returns other notable available versions for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return array
+   *   An array of version strings, keyed by "major.minor" (a higher major
+   *   branch) or "major.minor.x" (a pre-release on the current branch).
+   */
   public function getAlso(string $user, string $module):array {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -398,6 +653,18 @@ class Checker {
     return $this->also[$user][$module] ?? [];
   }
 
+  /**
+   * Returns the highest available version for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return string
+   *   The highest available version newer than what's installed, or an
+   *   empty string if there isn't one.
+   */
   public function getLatestVersion(string $user, string $module):string {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -406,6 +673,17 @@ class Checker {
     return $this->latestVersions[$user][$module] ?? "";
   }
 
+  /**
+   * Returns the recommended version to update to for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return string
+   *   The recommended version, or an empty string if there isn't one.
+   */
   public function getRecommended(string $user, string $module):string {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -414,6 +692,18 @@ class Checker {
     return $this->recommended[$user][$module] ?? "";
   }
 
+  /**
+   * Returns release data for versions flagged as security releases.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return array
+   *   An array of Drupal-shaped release data for every version listed in
+   *   composer.json's "extra" "security" list.
+   */
   public function getSecurityUpdates(string $user, string $module):array {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -422,6 +712,18 @@ class Checker {
     return $this->securityUpdates[$user][$module] ?? [];
   }
 
+  /**
+   * Returns Drupal-native admin notices for a module.
+   *
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module
+   *   The module machine name.
+   *
+   * @return array
+   *   An array of {class, label, data} notices, e.g. flagging that a site
+   *   is below the minimum supported version for its branch.
+   */
   public function getExtra(string $user, string $module):array {
     if (empty($this->packagistData)) {
       $this->getUpdates();
@@ -430,6 +732,21 @@ class Checker {
     return $this->extra[$user][$module] ?? [];
   }
 
+  /**
+   * Merges this module's calculated update data into a Drupal project array.
+   *
+   * @param array $package
+   *   The project data for this module, as passed into
+   *   hook_update_status_alter().
+   * @param string $user
+   *   The Packagist vendor name.
+   * @param string $module_name
+   *   The module machine name.
+   *
+   * @return array
+   *   The $package array, with link/title/status/releases/also/
+   *   latest_version/recommended/"security updates"/extra merged in.
+   */
   public function updateDrupalModulePackage(array $package, string $user, string $module_name):array {
 
     $package['link'] = $this->getLink($user, $module_name);

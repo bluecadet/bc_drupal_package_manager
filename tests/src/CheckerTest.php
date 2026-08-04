@@ -13,6 +13,9 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
  */
 class CheckerTest extends TestCase {
 
+  /**
+   * Mocks Drupal's container so \Drupal::service('module_handler') resolves.
+   */
   protected function setUp(): void {
     parent::setUp();
 
@@ -37,11 +40,22 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Builds a flat version => release-data map, as returned by
-   * https://packagist.org/packages/{vendor}/{package}.json's
-   * package.versions key. $extra_by_version optionally attaches
-   * composer.json "extra" data to specific versions, keyed by version
-   * string, to simulate maintainer-curated release-status metadata.
+   * Builds a flat version => release-data map, as Packagist would return it.
+   *
+   * Matches the shape of package.versions from
+   * https://packagist.org/packages/{vendor}/{package}.json.
+   * $extra_by_version optionally attaches composer.json "extra" data to
+   * specific versions, keyed by version string, to simulate
+   * maintainer-curated release-status metadata.
+   *
+   * @param array $versions
+   *   Version strings to include.
+   * @param array $extra_by_version
+   *   An optional map of version string to "extra" data to attach to that
+   *   version's release entry.
+   *
+   * @return array
+   *   The version => release-data map.
    */
   protected function packagistPackages(array $versions, array $extra_by_version = []): array {
     $packages = [];
@@ -54,6 +68,9 @@ class CheckerTest extends TestCase {
     return $packages;
   }
 
+  /**
+   * A newer stable release in the current major is recommended and flagged.
+   */
   public function testFlagsNotCurrentForNewerStableReleaseWithinSameMajor() {
     $checker = new TestableChecker(
       ['bluecadet' => ['bluecadet_utilities']],
@@ -74,9 +91,10 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Regression test: a newer major release used to leave the status at
-   * CURRENT because NOT_CURRENT was only ever set inside the "same major"
-   * branch. It should be flagged just like any other newer release.
+   * Regression test: a newer major release must still flag NOT_CURRENT.
+   *
+   * This used to leave the status at CURRENT because NOT_CURRENT was only
+   * ever set inside the "same major" branch.
    */
   public function testFlagsNotCurrentForNewerMajorRelease() {
     $checker = new TestableChecker(
@@ -95,9 +113,10 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Regression test: packages are sorted before processing, and the
-   * comparator must yield a real ascending sort regardless of input order
-   * for the "latest" tracking to be correct.
+   * Regression test: "latest" tracking must be correct regardless of order.
+   *
+   * Packages are sorted before processing, and the comparator must yield
+   * a real ascending sort for this to work.
    */
   public function testLatestVersionIsCorrectRegardlessOfInputOrder() {
     $checker = new TestableChecker(
@@ -113,8 +132,9 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Regression test: a pre-release patch on the current minor branch should
-   * surface as an "x.y.x" entry in also() without flipping the status.
+   * A pre-release patch on the current branch doesn't flip the status.
+   *
+   * It should appear as an "x.y.x" entry in also() instead.
    */
   public function testPreReleaseDoesNotAffectStatus() {
     $checker = new TestableChecker(
@@ -132,9 +152,11 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Regression test: a missing/unparseable existing_version used to reach
-   * a method call on a bare string ("") and throw a fatal Error. It should
-   * now be skipped gracefully with a warning recorded instead.
+   * Regression test: a missing/unparseable existing_version must not crash.
+   *
+   * This used to reach a method call on a bare string ("") and throw a
+   * fatal Error. It should now be skipped gracefully with a warning
+   * recorded instead.
    */
   public function testSkipsModuleWithMissingExistingVersionWithoutCrashing() {
     $checker = new TestableChecker(
@@ -151,9 +173,10 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * Regression test: missing/failed Packagist data used to reach
-   * usort(null, ...) and throw a fatal TypeError. It should now be skipped
-   * gracefully with a warning recorded instead.
+   * Regression test: missing/failed Packagist data must not crash.
+   *
+   * This used to reach usort(NULL, ...) and throw a fatal TypeError. It
+   * should now be skipped gracefully with a warning recorded instead.
    */
   public function testSkipsModuleWithMissingPackagistDataWithoutCrashing() {
     $checker = new TestableChecker(
@@ -168,9 +191,11 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * A maintainer-curated "recommended" entry for the installed branch
-   * (read from the latest release's composer.json "extra") should override
-   * the automatic "highest stable release in the current major" pick.
+   * A curated "recommended" entry overrides the automatic branch pick.
+   *
+   * The entry is read from the latest release's composer.json "extra" and
+   * matched to the installed branch; it should override the automatic
+   * "highest stable release in the current major" calculation.
    */
   public function testExtraRecommendedOverridesAutomaticCalculation() {
     $checker = new TestableChecker(
@@ -190,8 +215,9 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * A site running below the "minimum_supported" version for its branch
-   * should get a Drupal-native "extra" admin notice.
+   * A site below "minimum_supported" for its branch gets an admin notice.
+   *
+   * The notice uses Drupal's native "extra" {class, label, data} shape.
    */
   public function testBelowMinimumSupportedAddsExtraNotice() {
     $checker = new TestableChecker(
@@ -212,9 +238,11 @@ class CheckerTest extends TestCase {
   }
 
   /**
-   * A version listed in "security" should be marked with the Drupal-native
-   * terms shape ProjectRelease::isSecurityRelease() reads, and surfaced
-   * via getSecurityUpdates() (Drupal's "security updates" project key).
+   * A version listed in "security" is marked and surfaced correctly.
+   *
+   * It should be marked with the Drupal-native terms shape
+   * ProjectRelease::isSecurityRelease() reads, and surfaced via
+   * getSecurityUpdates() (Drupal's "security updates" project key).
    */
   public function testSecurityVersionsAreMarkedAndSurfaced() {
     $checker = new TestableChecker(

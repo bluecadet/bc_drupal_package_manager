@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="bc_drupal_package_manager">
+  <description>Drupal coding standards for this package.</description>
+
+  <config name="installed_paths" value="vendor/drupal/coder/coder_sniffer,vendor/slevomat/coding-standard,vendor/sirbrillig/phpcs-variable-analysis"/>
+
+  <arg name="extensions" value="php"/>
+  <arg name="colors"/>
+
+  <file>src</file>
+  <file>tests</file>
+
+  <rule ref="Drupal"/>
+  <rule ref="DrupalPractice"/>
+</ruleset>

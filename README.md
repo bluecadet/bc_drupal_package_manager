@@ -71,6 +71,15 @@ composer install
 composer test
 ```
 
+## Coding standards
+
+This package follows Drupal's coding standards (via [drupal/coder](https://www.drupal.org/project/coder)), even though it isn't a Drupal module itself:
+
+```bash
+composer install
+composer lint
+```
+
 ## TODO
 
 - **Caching**: Packagist responses are currently fetched live on every call to `getUpdates()`. Since this package isn't a Drupal module and shouldn't assume `\Drupal` is bootstrapped, add support for injecting a cache backend (rather than hard-coding Drupal's Cache API) so repeated update checks don't re-fetch from Packagist every time.
