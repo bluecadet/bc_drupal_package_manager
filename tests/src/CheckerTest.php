@@ -217,6 +217,61 @@ class CheckerTest extends TestCase {
   }
 
   /**
+   * A curated "recommended" at or below the installed version is ignored.
+   *
+   * Drupal's update report reads $project['releases'][$recommended], and
+   * "releases" only holds versions newer than the installed one. Recommending
+   * a version that isn't one of them crashed the whole report with a TypeError.
+   */
+  public function testExtraRecommendedNotNewerThanInstalledIsIgnored() {
+    $project = $this->project('5.1.0');
+    $checker = $this->checker(
+      ['bluecadet' => ['bluecadet_utilities']],
+      ['bluecadet_utilities' => $project]
+    );
+    $checker->setPackagistData([
+      'bluecadet' => ['bluecadet_utilities' => $this->packagistPackages(
+        ['5.0.0', '5.1.0'],
+        ['5.1.0' => ['recommended' => ['4.2.2', '5.0.0']]]
+      )],
+    ]);
+    $checker->getUpdates();
+
+    $this->assertSame('', $checker->getRecommended('bluecadet', 'bluecadet_utilities'));
+
+    $updated = $checker->updateDrupalModulePackage($project, 'bluecadet', 'bluecadet_utilities');
+    $this->assertArrayNotHasKey('recommended', $updated);
+  }
+
+  /**
+   * A recommended version below the installed one never reaches the project.
+   *
+   * Same failure as above, but where the site is behind the latest release and
+   * "releases" exists: the recommendation (the installed version itself) isn't
+   * a key in "releases", so it must not be set.
+   */
+  public function testExtraRecommendedMissingFromReleasesIsNotSet() {
+    $project = $this->project('5.0.0');
+    $checker = $this->checker(
+      ['bluecadet' => ['bluecadet_utilities']],
+      ['bluecadet_utilities' => $project]
+    );
+    $checker->setPackagistData([
+      'bluecadet' => ['bluecadet_utilities' => $this->packagistPackages(
+        ['5.0.0', '5.1.0'],
+        ['5.1.0' => ['recommended' => ['5.0.0']]]
+      )],
+    ]);
+    $checker->getUpdates();
+    $updated = $checker->updateDrupalModulePackage($project, 'bluecadet', 'bluecadet_utilities');
+
+    // The automatic pick (highest stable in the major) wins, and it is a real
+    // key in "releases".
+    $this->assertSame('5.1.0', $updated['recommended']);
+    $this->assertArrayHasKey($updated['recommended'], $updated['releases']);
+  }
+
+  /**
    * A site below "minimum_supported" for its branch gets an admin notice.
    *
    * The notice uses Drupal's native "extra" {class, label, data} shape.

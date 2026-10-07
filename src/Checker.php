@@ -354,7 +354,10 @@ class Checker {
 
     // A maintainer-curated recommendation overrides the automatic "highest
     // stable release in the current major" calculation from getUpdates().
-    if ($match = $this->findMatchingBranchVersion($existing_version, $extra['recommended'] ?? [])) {
+    // Only a version newer than the installed one can be recommended: Drupal's
+    // update report looks the recommendation up in "releases", which only holds
+    // versions newer than what is installed.
+    if (($match = $this->findMatchingBranchVersion($existing_version, $extra['recommended'] ?? [])) && $match->isGreaterThan($existing_version)) {
       $this->recommended[$user][$module_name] = (string) $match;
     }
 
@@ -782,7 +785,10 @@ class Checker {
     if ($latest_version = $this->getLatestVersion($user, $module_name)) {
       $package['latest_version'] = $latest_version;
     }
-    if ($recommended = $this->getRecommended($user, $module_name)) {
+    // Drupal's update report reads $package['releases'][$recommended], so never
+    // hand it a recommendation that isn't an available release (it would crash
+    // the report with a TypeError).
+    if (($recommended = $this->getRecommended($user, $module_name)) && isset($package['releases'][$recommended])) {
       $package['recommended'] = $recommended;
     }
     if ($security_updates = $this->getSecurityUpdates($user, $module_name)) {
